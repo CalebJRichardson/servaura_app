@@ -1,114 +1,68 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowRight, Check, CreditCard as Edit2, Plus } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import { useThemeColors } from '@/constants/Colors';
 import Header from '@/components/ui/Header';
+import { usePlan } from '@/app/_layout'; // Assuming similar context pattern
 
-// Mock data for user's current plan
-const CURRENT_PLAN = {
-  name: 'Premium',
-  price: '$249.99',
-  billing: 'monthly',
-  startDate: 'July 15, 2025',
-  services: [
-    { name: 'Weekly home cleaning', frequency: 'Every Monday' },
-    { name: 'Bi-weekly lawn care', frequency: '1st and 3rd Wednesday' },
-    { name: 'Quarterly HVAC service', frequency: 'Jan, Apr, Jul, Oct' },
-    { name: 'Quarterly window washing', frequency: 'Jan, Apr, Jul, Oct' },
-    { name: 'Annual power washing', frequency: 'April' },
-  ],
-};
+// Types for better type safety
+interface PlanService {
+  name: string;
+  frequency: string;
+}
 
-// Mock data for available plans
-const AVAILABLE_PLANS = [
-  {
-    name: 'Basic',
-    price: '$149.99',
-    features: [
-      'Monthly home cleaning',
-      'Quarterly lawn maintenance',
-      'Annual HVAC inspection',
-    ],
-  },
-  {
-    name: 'Standard',
-    price: '$199.99',
-    features: [
-      'Bi-weekly home cleaning',
-      'Monthly lawn maintenance',
-      'Quarterly HVAC service',
-      'Annual window washing',
-      'One service contractor visit',
-    ],
-  },
-  {
-    name: 'Premium',
-    price: '$249.99',
-    features: [
-      'Weekly home cleaning',
-      'Bi-weekly lawn care',
-      'Quarterly HVAC service',
-      'Quarterly window washing',
-      'Annual power washing',
-      'Two service contractor visits',
-    ],
-    current: true,
-  },
-  {
-    name: 'Luxury',
-    price: '$399.99',
-    features: [
-      'Twice weekly home cleaning',
-      'Weekly lawn and garden care',
-      'Quarterly HVAC service',
-      'Monthly window washing',
-      'Quarterly power washing',
-      'Unlimited service contractor visits',
-    ],
-  },
-];
+interface Plan {
+  id: string;
+  name: string;
+  price: string;
+  billing: string;
+  startDate?: string;
+  services: PlanService[];
+  features?: string[];
+  current?: boolean;
+}
+
+interface AddOnService {
+  id: number;
+  name: string;
+  frequency: string;
+  price: string;
+  selected: boolean;
+}
 
 // All available services in order
 const ALL_SERVICES = [
-  { id: 1, name: 'Home Cleaning', frequency: 'Weekly' },
-  { id: 2, name: 'Window Cleaning', frequency: 'Quarterly' },
-  { id: 3, name: 'Lawn & Garden', frequency: 'Bi-weekly' },
-  { id: 4, name: 'Power Washing', frequency: 'Annual' },
-  { id: 5, name: 'Solar Panel Cleaning', frequency: 'Quarterly' },
-  { id: 6, name: 'Pool Cleaning', frequency: 'Weekly' },
-  { id: 7, name: 'HVAC Services', frequency: 'Quarterly' },
-  { id: 8, name: 'Plumbing', frequency: 'As needed' },
-  { id: 9, name: 'Electrical', frequency: 'As needed' },
+  { id: 1, name: 'Home Cleaning', frequency: 'Weekly', price: '$29.99' },
+  { id: 2, name: 'Window Cleaning', frequency: 'Quarterly', price: '$19.99' },
+  { id: 3, name: 'Lawn & Garden', frequency: 'Bi-weekly', price: '$39.99' },
+  { id: 4, name: 'Power Washing', frequency: 'Annual', price: '$49.99' },
+  { id: 5, name: 'Solar Panel Cleaning', frequency: 'Quarterly', price: '$24.99' },
+  { id: 6, name: 'Pool Cleaning', frequency: 'Weekly', price: '$34.99' },
+  { id: 7, name: 'HVAC Services', frequency: 'Quarterly', price: '$44.99' },
+  { id: 8, name: 'Plumbing', frequency: 'As needed', price: '$59.99' },
+  { id: 9, name: 'Electrical', frequency: 'As needed', price: '$54.99' },
 ];
 
 // Function to get available add-ons based on current plan
-const getAvailableAddOns = (currentPlanServices) => {
-  console.log('Input services:', currentPlanServices);
-  
-  // Get service names that are already included in current plan
-  const includedServices = new Set();
+const getAvailableAddOns = (currentPlanServices: PlanService[]): AddOnService[] => {
+  const includedServices = new Set<string>();
   
   currentPlanServices.forEach(service => {
     const serviceName = service.name.toLowerCase();
-    console.log('Processing service:', serviceName);
     
-    // Check each service name and mark corresponding services as included
     if (serviceName.includes('cleaning') && serviceName.includes('home')) {
-      console.log('Found home cleaning, excluding Home Cleaning');
       includedServices.add('Home Cleaning');
     }
     if (serviceName.includes('window')) {
-      console.log('Found window service, excluding Window Cleaning');
       includedServices.add('Window Cleaning');
     }
     if (serviceName.includes('lawn') || serviceName.includes('garden')) {
-      console.log('Found lawn/garden service, excluding Lawn & Garden');
       includedServices.add('Lawn & Garden');
     }
     if (serviceName.includes('power') && serviceName.includes('washing')) {
-      console.log('Found power washing, excluding Power Washing');
       includedServices.add('Power Washing');
     }
     if (serviceName.includes('solar')) {
@@ -118,7 +72,6 @@ const getAvailableAddOns = (currentPlanServices) => {
       includedServices.add('Pool Cleaning');
     }
     if (serviceName.includes('hvac')) {
-      console.log('Found HVAC service, excluding HVAC Services');
       includedServices.add('HVAC Services');
     }
     if (serviceName.includes('plumbing')) {
@@ -129,54 +82,176 @@ const getAvailableAddOns = (currentPlanServices) => {
     }
   });
   
-  console.log('Services to exclude:', Array.from(includedServices));
-  
-  // Filter out services that are already included
-  const filtered = ALL_SERVICES
-    .filter(service => {
-      const shouldInclude = !includedServices.has(service.name);
-      console.log(`Service "${service.name}": ${shouldInclude ? 'INCLUDE' : 'EXCLUDE'}`);
-      return shouldInclude;
-    })
+  return ALL_SERVICES
+    .filter(service => !includedServices.has(service.name))
     .slice(0, 3)
-    .map((service, index) => ({
+    .map(service => ({
       ...service,
       selected: false
     }));
-    
-  console.log('Final filtered services:', filtered);
-  return filtered;
 };
 
-const getNextTierPlan = (currentPlanName) => {
+const getNextTierPlan = (currentPlanName: string, availablePlans: Plan[]): Plan | null => {
   const planOrder = ['Basic', 'Standard', 'Premium', 'Luxury'];
   const currentIndex = planOrder.indexOf(currentPlanName);
   
   if (currentIndex === -1 || currentIndex === planOrder.length - 1) {
-    return null; // No next tier available
+    return null;
   }
   
-  return AVAILABLE_PLANS.find(plan => plan.name === planOrder[currentIndex + 1]);
+  return availablePlans.find(plan => plan.name === planOrder[currentIndex + 1]) || null;
 };
 
 export default function PlanScreen() {
   const colors = useThemeColors();
+  const router = useRouter();
+  
+  // Get plan context - following the same pattern as address.tsx
+  const { 
+    currentPlan,
+    availablePlans,
+    planLoading,
+    planError,
+    updatePlan,
+    addPlanAddOns,
+    switchPlan,
+    refreshPlan
+  } = usePlan();
+
   const [showAllPlans, setShowAllPlans] = useState(false);
+  const [addOns, setAddOns] = useState<AddOnService[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPlanSwitching, setIsPlanSwitching] = useState(false);
+
+  // Initialize add-ons when current plan loads
+  useEffect(() => {
+    if (currentPlan?.services) {
+      const availableAddOns = getAvailableAddOns(currentPlan.services);
+      setAddOns(availableAddOns);
+    }
+  }, [currentPlan]);
+
+  const nextTierPlan = currentPlan && availablePlans 
+    ? getNextTierPlan(currentPlan.name, availablePlans) 
+    : null;
   
-  // Debug: Let's see what services we're working with
-  console.log('CURRENT_PLAN.services:', CURRENT_PLAN.services);
-  const availableAddOns = getAvailableAddOns(CURRENT_PLAN.services);
-  console.log('Available add-ons:', availableAddOns);
-  
-  const [addOns, setAddOns] = useState(availableAddOns);
-  
-  const nextTierPlan = getNextTierPlan(CURRENT_PLAN.name);
-  
-  const toggleAddOn = (id) => {
+  const toggleAddOn = (id: number) => {
     setAddOns(addOns.map(addon => 
       addon.id === id ? { ...addon, selected: !addon.selected } : addon
     ));
   };
+
+  const handleSaveAddOns = async () => {
+    const selectedAddOns = addOns.filter(addon => addon.selected);
+    
+    if (selectedAddOns.length === 0) {
+      Alert.alert('No Changes', 'Please select at least one add-on to save changes.');
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      await addPlanAddOns(selectedAddOns.map(addon => ({
+        serviceId: addon.id,
+        name: addon.name,
+        frequency: addon.frequency,
+        price: addon.price
+      })));
+      
+      Alert.alert('Success', 'Add-ons have been added to your plan successfully!');
+      
+      // Reset selections after successful save
+      setAddOns(addOns.map(addon => ({ ...addon, selected: false })));
+    } catch (error) {
+      console.error('Error saving add-ons:', error);
+      Alert.alert('Error', 'Failed to save add-ons. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSwitchPlan = async (planId: string) => {
+    Alert.alert(
+      'Switch Plan',
+      'Are you sure you want to switch to this plan? Changes will take effect immediately.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Switch Plan', 
+          style: 'default',
+          onPress: async () => {
+            setIsPlanSwitching(true);
+            try {
+              await switchPlan(planId);
+              Alert.alert('Success', 'Your plan has been updated successfully!');
+            } catch (error) {
+              console.error('Error switching plan:', error);
+              Alert.alert('Error', 'Failed to switch plan. Please try again.');
+            } finally {
+              setIsPlanSwitching(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCustomizePlan = () => {
+    router.push('/plan/customize');
+  };
+
+  const handleContactSupport = () => {
+    router.push('/support');
+  };
+
+  // Show loading state
+  if (planLoading) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="My Plan" />
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, { color: colors.text }]}>Loading your plan...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error state
+  if (planError) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="My Plan" />
+        <View style={styles.errorContainer}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{planError}</Text>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: colors.accent }]}
+            onPress={refreshPlan}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show empty state if no current plan
+  if (!currentPlan) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="My Plan" />
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: colors.text }]}>No active plan found</Text>
+          <TouchableOpacity 
+            style={[styles.browsePlansButton, { backgroundColor: colors.accent }]}
+            onPress={() => router.push('/plans')}
+          >
+            <Text style={styles.browsePlansButtonText}>Browse Plans</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const styles = StyleSheet.create({
     container: {
@@ -186,6 +261,59 @@ export default function PlanScreen() {
     scrollView: {
       flex: 1,
       paddingHorizontal: 20,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    errorText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    retryButton: {
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    retryButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+    },
+    emptyContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    emptyText: {
+      fontSize: 18,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    browsePlansButton: {
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 10,
+    },
+    browsePlansButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontFamily: 'Inter-SemiBold',
     },
     currentPlanCard: {
       backgroundColor: colors.cardBackground,
@@ -269,39 +397,11 @@ export default function PlanScreen() {
       color: colors.gray,
       marginTop: 2,
     },
-    planAddOnsContainer: {
-      marginBottom: 20,
-    },
-    addOnItem: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingVertical: 10,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    addOnTextContainer: {
-      flex: 1,
-    },
-    addOnName: {
-      fontSize: 14,
-      fontFamily: 'Inter-SemiBold',
-      color: colors.text,
-    },
-    addOnFrequency: {
-      fontSize: 12,
-      fontFamily: 'Inter-Regular',
-      color: colors.gray,
-    },
-    addOnPrice: {
-      fontSize: 14,
-      fontFamily: 'Inter-SemiBold',
-      color: colors.accent,
-    },
     editButton: {
       borderRadius: 10,
       paddingVertical: 12,
       overflow: 'hidden',
+      opacity: isPlanSwitching ? 0.7 : 1,
     },
     primaryActionGradient: {
       flexDirection: 'row',
@@ -400,6 +500,7 @@ export default function PlanScreen() {
       borderRadius: 8,
       paddingVertical: 10,
       overflow: 'hidden',
+      opacity: isPlanSwitching ? 0.7 : 1,
     },
     selectPlanText: {
       color: colors.background,
@@ -458,12 +559,13 @@ export default function PlanScreen() {
       borderColor: colors.accent,
     },
     saveChangesButton: {
-      borderRadius: 0,
+      borderRadius: 10,
       paddingVertical: 15,
       paddingHorizontal: 0,
       alignItems: 'center',
       marginTop: 20,
       overflow: 'hidden',
+      opacity: isSaving ? 0.7 : 1,
     },
     saveChangesText: {
       color: colors.background,
@@ -494,17 +596,19 @@ export default function PlanScreen() {
         {/* Current Plan Section */}
         <View style={styles.currentPlanCard}>
           <View style={styles.planBadge}>
-            <Text style={styles.planBadgeText}>{CURRENT_PLAN.name}</Text>
+            <Text style={styles.planBadgeText}>{currentPlan.name}</Text>
           </View>
           
           <View style={styles.planDetails}>
-            <Text style={styles.planPrice}>{CURRENT_PLAN.price} <Text style={styles.pricePeriod}>/ month</Text></Text>
-            <Text style={styles.planDate}>Started on {CURRENT_PLAN.startDate}</Text>
+            <Text style={styles.planPrice}>{currentPlan.price} <Text style={styles.pricePeriod}>/ {currentPlan.billing}</Text></Text>
+            {currentPlan.startDate && (
+              <Text style={styles.planDate}>Started on {currentPlan.startDate}</Text>
+            )}
           </View>
           
           <View style={styles.planServicesContainer}>
             <Text style={styles.sectionLabel}>Included Services</Text>
-            {CURRENT_PLAN.services.map((service, index) => (
+            {currentPlan.services.map((service, index) => (
               <View key={index} style={styles.serviceItem}>
                 <LinearGradient
                   colors={[colors.accentGradientLight, colors.accentGradientDark]}
@@ -522,7 +626,11 @@ export default function PlanScreen() {
             ))}
           </View>
           
-          <TouchableOpacity style={styles.editButton}>
+          <TouchableOpacity 
+            style={styles.editButton}
+            onPress={handleCustomizePlan}
+            disabled={isPlanSwitching}
+          >
             <LinearGradient
               colors={[colors.accentGradientLight, colors.accentGradientDark]}
               start={{ x: 0, y: 0 }}
@@ -530,135 +638,172 @@ export default function PlanScreen() {
               style={styles.primaryActionGradient}
             >
               <Edit2 size={18} color={colors.background} />
-              <Text style={styles.editButtonText}>Customize Plan</Text>
+              <Text style={styles.editButtonText}>
+                {isPlanSwitching ? 'Updating...' : 'Customize Plan'}
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
         
         {/* Available Add-ons Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Available Add-ons</Text>
-          
-          <View style={styles.addOnsContainer}>
-            {addOns.map((addon) => (
-              <TouchableOpacity 
-                key={addon.id}
-                style={[
-                  styles.addOnOption,
-                  addon.selected && styles.addOnSelected
-                ]}
-                onPress={() => toggleAddOn(addon.id)}
-              >
-                <View style={styles.addOnContent}>
-                  <Text style={styles.addOnOptionName}>{addon.name}</Text>
-                  <Text style={styles.addOnOptionFrequency}>{addon.frequency}</Text>
-                </View>
-                
-                <View style={[
-                  styles.addOnCheckbox,
-                  addon.selected && styles.addOnCheckboxSelected
-                ]}>
-                  {addon.selected && <Check size={14} color={colors.background} />}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-          
-          <TouchableOpacity style={styles.saveChangesButton}>
-            <LinearGradient
-              colors={[colors.accentGradientLight, colors.accentGradientDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.primaryActionGradient}
+        {addOns.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Available Add-ons</Text>
+            
+            <View style={styles.addOnsContainer}>
+              {addOns.map((addon) => (
+                <TouchableOpacity 
+                  key={addon.id}
+                  style={[
+                    styles.addOnOption,
+                    addon.selected && styles.addOnSelected
+                  ]}
+                  onPress={() => toggleAddOn(addon.id)}
+                  disabled={isSaving}
+                >
+                  <View style={styles.addOnContent}>
+                    <Text style={styles.addOnOptionName}>{addon.name}</Text>
+                    <Text style={styles.addOnOptionFrequency}>{addon.frequency}</Text>
+                    <Text style={styles.addOnOptionPrice}>{addon.price}/month</Text>
+                  </View>
+                  
+                  <View style={[
+                    styles.addOnCheckbox,
+                    addon.selected && styles.addOnCheckboxSelected
+                  ]}>
+                    {addon.selected && <Check size={14} color={colors.background} />}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+            
+            <TouchableOpacity 
+              style={styles.saveChangesButton}
+              onPress={handleSaveAddOns}
+              disabled={isSaving}
             >
-              <Text style={styles.saveChangesText}>Save Changes</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-        
-        {/* Available Plans Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Available Plans</Text>
-            <TouchableOpacity onPress={() => setShowAllPlans(!showAllPlans)}>
-              <Text style={styles.seeAllText}>
-                {showAllPlans ? 'Hide' : 'See all'}
-              </Text>
+              <LinearGradient
+                colors={[colors.accentGradientLight, colors.accentGradientDark]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.primaryActionGradient}
+              >
+                <Text style={styles.saveChangesText}>
+                  {isSaving ? 'Saving...' : 'Save Changes'}
+                </Text>
+              </LinearGradient>
             </TouchableOpacity>
           </View>
-          
-          <View style={styles.plansContainer}>
-            {showAllPlans ? (
-              AVAILABLE_PLANS.filter(plan => !plan.current).map((plan, index) => (
-                <TouchableOpacity 
-                  key={index} 
-                  style={styles.planOption}
-                >
-                  <View style={styles.planOptionHeader}>
-                    <Text style={styles.planOptionName}>{plan.name}</Text>
-                  </View>
-                  
-                  <Text style={styles.planOptionPrice}>{plan.price} <Text style={styles.pricePeriod}>/ month</Text></Text>
-                  
-                  <View style={styles.planOptionFeatures}>
-                    {plan.features.map((feature, idx) => (
-                      <View key={idx} style={styles.featureItem}>
-                        <Check size={14} color={colors.accent} />
-                        <Text style={styles.featureText}>{feature}</Text>
+        )}
+        
+        {/* Available Plans Section */}
+        {availablePlans && availablePlans.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Available Plans</Text>
+              <TouchableOpacity onPress={() => setShowAllPlans(!showAllPlans)}>
+                <Text style={styles.seeAllText}>
+                  {showAllPlans ? 'Hide' : 'See all'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.plansContainer}>
+              {showAllPlans ? (
+                availablePlans.filter(plan => !plan.current).map((plan) => (
+                  <TouchableOpacity 
+                    key={plan.id} 
+                    style={styles.planOption}
+                    onPress={() => handleSwitchPlan(plan.id)}
+                    disabled={isPlanSwitching}
+                  >
+                    <View style={styles.planOptionHeader}>
+                      <Text style={styles.planOptionName}>{plan.name}</Text>
+                    </View>
+                    
+                    <Text style={styles.planOptionPrice}>{plan.price} <Text style={styles.pricePeriod}>/ month</Text></Text>
+                    
+                    {plan.features && (
+                      <View style={styles.planOptionFeatures}>
+                        {plan.features.map((feature, idx) => (
+                          <View key={idx} style={styles.featureItem}>
+                            <Check size={14} color={colors.accent} />
+                            <Text style={styles.featureText}>{feature}</Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
-                  </View>
-                  
-                  <TouchableOpacity style={styles.selectPlanButton}>
-                    <LinearGradient
-                      colors={[colors.accentGradientLight, colors.accentGradientDark]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.primaryActionGradient}
+                    )}
+                    
+                    <TouchableOpacity 
+                      style={styles.selectPlanButton}
+                      disabled={isPlanSwitching}
                     >
-                      <Text style={styles.selectPlanText}>Switch Plan</Text>
-                      <ArrowRight size={14} color={colors.background} />
-                    </LinearGradient>
+                      <LinearGradient
+                        colors={[colors.accentGradientLight, colors.accentGradientDark]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.primaryActionGradient}
+                      >
+                        <Text style={styles.selectPlanText}>
+                          {isPlanSwitching ? 'Switching...' : 'Switch Plan'}
+                        </Text>
+                        {!isPlanSwitching && <ArrowRight size={14} color={colors.background} />}
+                      </LinearGradient>
+                    </TouchableOpacity>
                   </TouchableOpacity>
-                </TouchableOpacity>
-              ))
-            ) : (
-              nextTierPlan && (
-                <TouchableOpacity style={styles.planOption}>
-                  <View style={styles.planOptionHeader}>
-                    <Text style={styles.planOptionName}>{nextTierPlan.name}</Text>
-                  </View>
-                  
-                  <Text style={styles.planOptionPrice}>{nextTierPlan.price} <Text style={styles.pricePeriod}>/ month</Text></Text>
-                  
-                  <View style={styles.planOptionFeatures}>
-                    {nextTierPlan.features.map((feature, idx) => (
-                      <View key={idx} style={styles.featureItem}>
-                        <Check size={14} color={colors.accent} />
-                        <Text style={styles.featureText}>{feature}</Text>
+                ))
+              ) : (
+                nextTierPlan && (
+                  <TouchableOpacity 
+                    style={styles.planOption}
+                    onPress={() => handleSwitchPlan(nextTierPlan.id)}
+                    disabled={isPlanSwitching}
+                  >
+                    <View style={styles.planOptionHeader}>
+                      <Text style={styles.planOptionName}>{nextTierPlan.name}</Text>
+                    </View>
+                    
+                    <Text style={styles.planOptionPrice}>{nextTierPlan.price} <Text style={styles.pricePeriod}>/ month</Text></Text>
+                    
+                    {nextTierPlan.features && (
+                      <View style={styles.planOptionFeatures}>
+                        {nextTierPlan.features.map((feature, idx) => (
+                          <View key={idx} style={styles.featureItem}>
+                            <Check size={14} color={colors.accent} />
+                            <Text style={styles.featureText}>{feature}</Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
-                  </View>
-                  
-                  <TouchableOpacity style={styles.selectPlanButton}>
-                    <LinearGradient
-                      colors={[colors.accentGradientLight, colors.accentGradientDark]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.primaryActionGradient}
+                    )}
+                    
+                    <TouchableOpacity 
+                      style={styles.selectPlanButton}
+                      disabled={isPlanSwitching}
                     >
-                      <Text style={styles.selectPlanText}>Upgrade Plan</Text>
-                      <ArrowRight size={14} color={colors.background} />
-                    </LinearGradient>
+                      <LinearGradient
+                        colors={[colors.accentGradientLight, colors.accentGradientDark]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.primaryActionGradient}
+                      >
+                        <Text style={styles.selectPlanText}>
+                          {isPlanSwitching ? 'Upgrading...' : 'Upgrade Plan'}
+                        </Text>
+                        {!isPlanSwitching && <ArrowRight size={14} color={colors.background} />}
+                      </LinearGradient>
+                    </TouchableOpacity>
                   </TouchableOpacity>
-                </TouchableOpacity>
-              )
-            )}
+                )
+              )}
+            </View>
           </View>
-        </View>
+        )}
         
         {/* Contact Support Button */}
-        <TouchableOpacity style={styles.contactSupportButton}>
+        <TouchableOpacity 
+          style={styles.contactSupportButton}
+          onPress={handleContactSupport}
+        >
           <Text style={styles.contactSupportText}>Contact Support for Custom Plans</Text>
         </TouchableOpacity>
         

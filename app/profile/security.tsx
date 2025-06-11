@@ -1,20 +1,166 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Switch } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Lock, Shield, Smartphone } from 'lucide-react-native';
 import { useThemeColors } from '@/constants/Colors';
 import Header from '@/components/ui/Header';
+import { useAuth } from '@/app/_layout'; // Assuming similar context pattern
+
+interface SecuritySettings {
+  twoFactorEnabled: boolean;
+  biometricEnabled: boolean;
+  passwordLastChanged: string;
+}
+
+interface PasswordChangeData {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}
 
 export default function SecurityScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const [biometricEnabled, setBiometricEnabled] = useState(true);
+  
+  // Get security context (similar to address context)
+  const { 
+    securitySettings,
+    securityLoading,
+    securityError,
+    updateSecuritySettings,
+    changePassword,
+    getSecuritySettings
+  } = useAuth();
 
-  const handleChangePassword = () => {
-    // Change password logic
+  const [settings, setSettings] = useState<SecuritySettings>({
+    twoFactorEnabled: false,
+    biometricEnabled: true,
+    passwordLastChanged: '',
+  });
+
+  const [passwordData, setPasswordData] = useState<PasswordChangeData>({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  // Load security settings on component mount
+  useEffect(() => {
+    if (securitySettings) {
+      setSettings({
+        twoFactorEnabled: securitySettings.twoFactorEnabled || false,
+        biometricEnabled: securitySettings.biometricEnabled || true,
+        passwordLastChanged: securitySettings.passwordLastChanged || '',
+      });
+    }
+  }, [securitySettings]);
+
+  const handleToggleTwoFactor = async (value: boolean) => {
+    setIsUpdating(true);
+    try {
+      const updatedSettings = { ...settings, twoFactorEnabled: value };
+      await updateSecuritySettings(updatedSettings);
+      setSettings(updatedSettings);
+      Alert.alert(
+        'Success', 
+        value ? 'Two-factor authentication enabled' : 'Two-factor authentication disabled'
+      );
+    } catch (error) {
+      console.error('Error updating two-factor authentication:', error);
+      Alert.alert('Error', 'Failed to update two-factor authentication. Please try again.');
+    } finally {
+      setIsUpdating(false);
+    }
   };
+
+  const handleToggleBiometric = async (value: boolean) => {
+    setIsUpdating(true);
+    try {
+      const updatedSettings = { ...settings, biometricEnabled: value };
+      await updateSecuritySettings(updatedSettings);
+      setSettings(updatedSettings);
+      Alert.alert(
+        'Success', 
+        value ? 'Biometric authentication enabled' : 'Biometric authentication disabled'
+      );
+    } catch (error) {
+      console.error('Error updating biometric authentication:', error);
+      Alert.alert('Error', 'Failed to update biometric authentication. Please try again.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    // Validation
+    if (!passwordData.currentPassword.trim() || !passwordData.newPassword.trim() || !passwordData.confirmPassword.trim()) {
+      Alert.alert('Error', 'Please fill in all password fields');
+      return;
+    }
+
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      Alert.alert('Error', 'New passwords do not match');
+      return;
+    }
+
+    if (passwordData.newPassword.length < 8) {
+      Alert.alert('Error', 'New password must be at least 8 characters long');
+      return;
+    }
+
+    setIsChangingPassword(true);
+
+    try {
+      await changePassword(passwordData.currentPassword, passwordData.newPassword);
+      Alert.alert('Success', 'Password changed successfully');
+      
+      // Clear form
+      setPasswordData({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+      });
+    } catch (error) {
+      console.error('Error changing password:', error);
+      Alert.alert('Error', 'Failed to change password. Please check your current password and try again.');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  // Show loading state
+  if (securityLoading) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="Security Settings" onBack={() => router.back()} />
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, { color: colors.text }]}>Loading security settings...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error state
+  if (securityError) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="Security Settings" onBack={() => router.back()} />
+        <View style={styles.errorContainer}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{securityError}</Text>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: colors.accent }]}
+            onPress={() => getSecuritySettings()}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const styles = StyleSheet.create({
     container: {
@@ -80,6 +226,7 @@ export default function SecurityScreen() {
       padding: 15,
       alignItems: 'center',
       marginTop: 10,
+      opacity: isChangingPassword ? 0.7 : 1,
     },
     buttonText: {
       color: '#fff',
@@ -90,6 +237,7 @@ export default function SecurityScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
+      opacity: isUpdating ? 0.7 : 1,
     },
     settingInfo: {
       flex: 1,
@@ -124,6 +272,43 @@ export default function SecurityScreen() {
       color: colors.gray,
       lineHeight: 24,
     },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    errorText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    retryButton: {
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    retryButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+    },
+    lastChangedText: {
+      fontSize: 12,
+      fontFamily: 'Inter-Regular',
+      color: colors.gray,
+      marginTop: 10,
+    },
   });
 
   return (
@@ -144,6 +329,8 @@ export default function SecurityScreen() {
               <TextInput
                 style={styles.input}
                 secureTextEntry
+                value={passwordData.currentPassword}
+                onChangeText={(text) => setPasswordData({ ...passwordData, currentPassword: text })}
                 placeholder="Enter current password"
                 placeholderTextColor={colors.gray}
               />
@@ -154,6 +341,8 @@ export default function SecurityScreen() {
               <TextInput
                 style={styles.input}
                 secureTextEntry
+                value={passwordData.newPassword}
+                onChangeText={(text) => setPasswordData({ ...passwordData, newPassword: text })}
                 placeholder="Enter new password"
                 placeholderTextColor={colors.gray}
               />
@@ -164,14 +353,28 @@ export default function SecurityScreen() {
               <TextInput
                 style={styles.input}
                 secureTextEntry
+                value={passwordData.confirmPassword}
+                onChangeText={(text) => setPasswordData({ ...passwordData, confirmPassword: text })}
                 placeholder="Confirm new password"
                 placeholderTextColor={colors.gray}
               />
             </View>
 
-            <TouchableOpacity style={styles.button} onPress={handleChangePassword}>
-              <Text style={styles.buttonText}>Update Password</Text>
+            <TouchableOpacity 
+              style={styles.button} 
+              onPress={handleChangePassword}
+              disabled={isChangingPassword}
+            >
+              <Text style={styles.buttonText}>
+                {isChangingPassword ? 'Updating...' : 'Update Password'}
+              </Text>
             </TouchableOpacity>
+
+            {settings.passwordLastChanged && (
+              <Text style={styles.lastChangedText}>
+                Last changed: {new Date(settings.passwordLastChanged).toLocaleDateString()}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -191,10 +394,11 @@ export default function SecurityScreen() {
                 </Text>
               </View>
               <Switch
-                value={twoFactorEnabled}
-                onValueChange={setTwoFactorEnabled}
+                value={settings.twoFactorEnabled}
+                onValueChange={handleToggleTwoFactor}
+                disabled={isUpdating}
                 trackColor={{ false: colors.lightGray, true: colors.lightAccent }}
-                thumbColor={twoFactorEnabled ? colors.accent : '#f4f3f4'}
+                thumbColor={settings.twoFactorEnabled ? colors.accent : '#f4f3f4'}
               />
             </View>
           </View>
@@ -216,10 +420,11 @@ export default function SecurityScreen() {
                 </Text>
               </View>
               <Switch
-                value={biometricEnabled}
-                onValueChange={setBiometricEnabled}
+                value={settings.biometricEnabled}
+                onValueChange={handleToggleBiometric}
+                disabled={isUpdating}
                 trackColor={{ false: colors.lightGray, true: colors.lightAccent }}
-                thumbColor={biometricEnabled ? colors.accent : '#f4f3f4'}
+                thumbColor={settings.biometricEnabled ? colors.accent : '#f4f3f4'}
               />
             </View>
           </View>

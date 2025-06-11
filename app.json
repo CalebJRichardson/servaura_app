@@ -34,6 +34,12 @@
     ],
     "android": {
       "package": "com.servaura.app"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8febf29f-a6ed-4b93-923d-8bb8195e6ae9"
+      }
     }
   }
 }

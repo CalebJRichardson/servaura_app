@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   View, 
@@ -8,82 +8,234 @@ import {
   TouchableOpacity,
   Switch,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Calendar, Clock, MapPin, MessageCircle, Check } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useThemeColors } from '@/constants/Colors';
 import Header from '@/components/ui/Header';
 import { formatDate } from '@/utils/dateUtils';
 import DateTimePickerModal from '@/components/ui/DateTimePickerModal';
+import { useServices } from '@/app/_layout'; // Assuming you have a services context
+import { useAddress } from '@/app/_layout';
 
-// Mock data for services
-const SERVICES = [
-  { id: 1, name: 'Home Cleaning', selected: false },
-  { id: 2, name: 'Window Cleaning', selected: false },
-  { id: 3, name: 'Lawn & Garden', selected: false },
-  { id: 4, name: 'Power Washing', selected: false },
-  { id: 5, name: 'Solar Panel Cleaning', selected: false },
-  { id: 6, name: 'Pool Maintenance', selected: false },
-  { id: 7, name: 'HVAC Service', selected: false },
-  { id: 8, name: 'Plumbing', selected: false },
-  { id: 9, name: 'Electrical', selected: false },
-];
+// Service type definition
+interface Service {
+  id: string;
+  name: string;
+  category: string;
+  price?: number;
+  duration?: number;
+  selected: boolean;
+}
+
+interface ServiceRequest {
+  services: string[];
+  date: Date;
+  time: Date;
+  addressId: string;
+  notes: string;
+  urgent: boolean;
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+}
 
 export default function ServicesScreen() {
   const colors = useThemeColors();
-  const [services, setServices] = useState(SERVICES);
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  
+  // Get services and address contexts
+  const { 
+    services: availableServices,
+    servicesLoading,
+    servicesError,
+    createServiceRequest,
+    updateServiceRequest,
+    getServiceRequestById
+  } = useServices();
+
+  const {
+    addresses,
+    addressesLoading,
+    addressesError,
+    getDefaultAddress
+  } = useAddress();
+
+  // Determine if we're editing an existing service request
+  const requestId = params.id as string;
+  const isEditing = !!requestId;
+  const existingRequest = isEditing ? getServiceRequestById(requestId) : null;
+
+  // State management
+  const [services, setServices] = useState<Service[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedTime, setSelectedTime] = useState(new Date());
+  const [selectedAddressId, setSelectedAddressId] = useState<string>('');
   const [notes, setNotes] = useState('');
   const [urgent, setUrgent] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Load available services and set up initial state
+  useEffect(() => {
+    if (availableServices && availableServices.length > 0) {
+      setServices(availableServices.map(service => ({
+        ...service,
+        selected: false
+      })));
+    }
+  }, [availableServices]);
+
+  // Load existing service request data if editing
+  useEffect(() => {
+    if (isEditing && existingRequest) {
+      setSelectedDate(new Date(existingRequest.date));
+      setSelectedTime(new Date(existingRequest.time));
+      setSelectedAddressId(existingRequest.addressId);
+      setNotes(existingRequest.notes);
+      setUrgent(existingRequest.urgent);
+      
+      // Update selected services
+      setServices(prev => prev.map(service => ({
+        ...service,
+        selected: existingRequest.services.includes(service.id)
+      })));
+    }
+  }, [isEditing, existingRequest]);
+
+  // Set default address if not editing
+  useEffect(() => {
+    if (!isEditing && addresses && addresses.length > 0) {
+      const defaultAddress = getDefaultAddress() || addresses[0];
+      if (defaultAddress) {
+        setSelectedAddressId(defaultAddress.id);
+      }
+    }
+  }, [isEditing, addresses, getDefaultAddress]);
   
-  const toggleService = (id) => {
-    setServices(services.map(service => 
+  const toggleService = (id: string) => {
+    setServices(prev => prev.map(service => 
       service.id === id ? { ...service, selected: !service.selected } : service
     ));
   };
 
-  const handleDateChange = (date) => {
+  const handleDateChange = (date: Date) => {
     setSelectedDate(date);
     setShowDatePicker(false);
   };
 
-  const handleTimeChange = (time) => {
+  const handleTimeChange = (time: Date) => {
     setSelectedTime(time);
     setShowTimePicker(false);
   };
 
-  const submitRequest = () => {
+  const validateForm = (): boolean => {
     const selectedServices = services.filter(service => service.selected);
+    
     if (selectedServices.length === 0) {
-      alert('Please select at least one service');
-      return;
+      Alert.alert('Error', 'Please select at least one service');
+      return false;
     }
-    
-    // Here you would send the request to your backend
-    console.log({
-      services: selectedServices,
-      date: selectedDate,
-      time: selectedTime,
-      notes,
-      urgent
-    });
-    
-    // Success message
-    alert('Service request submitted successfully!');
-    
-    // Reset form
-    setServices(SERVICES);
-    setSelectedDate(new Date());
-    setSelectedTime(new Date());
-    setNotes('');
-    setUrgent(false);
+
+    if (!selectedAddressId) {
+      Alert.alert('Error', 'Please select a service address');
+      return false;
+    }
+
+    const now = new Date();
+    const selectedDateTime = new Date(selectedDate);
+    selectedDateTime.setHours(selectedTime.getHours(), selectedTime.getMinutes());
+
+    if (selectedDateTime <= now) {
+      Alert.alert('Error', 'Please select a future date and time');
+      return false;
+    }
+
+    return true;
   };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
+
+    setIsSaving(true);
+
+    try {
+      const selectedServiceIds = services
+        .filter(service => service.selected)
+        .map(service => service.id);
+
+      const serviceRequestData: Omit<ServiceRequest, 'status'> = {
+        services: selectedServiceIds,
+        date: selectedDate,
+        time: selectedTime,
+        addressId: selectedAddressId,
+        notes: notes.trim(),
+        urgent
+      };
+
+      if (isEditing && requestId) {
+        await updateServiceRequest(requestId, serviceRequestData);
+        Alert.alert('Success', 'Service request updated successfully');
+      } else {
+        await createServiceRequest(serviceRequestData);
+        Alert.alert('Success', 'Service request submitted successfully');
+      }
+      
+      router.back();
+    } catch (error) {
+      console.error('Error saving service request:', error);
+      Alert.alert('Error', 'Failed to save service request. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Show loading state
+  if (servicesLoading || addressesLoading) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header 
+          title={isEditing ? "Edit Service Request" : "Request Service"} 
+          onBack={() => router.back()} 
+        />
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, { color: colors.text }]}>
+            Loading services...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error state
+  if (servicesError || addressesError) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header 
+          title={isEditing ? "Edit Service Request" : "Request Service"} 
+          onBack={() => router.back()} 
+        />
+        <View style={styles.errorContainer}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>
+            {servicesError || addressesError}
+          </Text>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: colors.accent }]}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.retryButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const selectedAddress = addresses?.find(addr => addr.id === selectedAddressId);
 
   const styles = StyleSheet.create({
     container: {
@@ -161,6 +313,33 @@ export default function ServicesScreen() {
     },
     checkIconVisible: {
       opacity: 1,
+    },
+    addressSelector: {
+      backgroundColor: colors.cardBackground,
+      borderRadius: 20,
+      padding: 20,
+      marginBottom: 20,
+    },
+    addressItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.secondary,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+    },
+    addressText: {
+      marginLeft: 12,
+      fontSize: 16,
+      fontFamily: 'Inter-Medium',
+      color: colors.text,
+      flex: 1,
+    },
+    addressSubText: {
+      marginLeft: 12,
+      fontSize: 14,
+      fontFamily: 'Inter-Regular',
+      color: colors.gray,
     },
     dateTimeContainer: {
       backgroundColor: colors.cardBackground,
@@ -243,6 +422,7 @@ export default function ServicesScreen() {
       overflow: 'hidden',
       marginTop: 10,
       marginBottom: 40,
+      opacity: isSaving ? 0.7 : 1,
     },
     submitButtonGradient: {
       padding: 20,
@@ -253,18 +433,55 @@ export default function ServicesScreen() {
       fontFamily: 'Inter-Bold',
       color: colors.background,
     },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    errorText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    retryButton: {
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    retryButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+    },
   });
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="auto" />
+      <Header 
+        title={isEditing ? "Edit Service Request" : "Request Service"} 
+        onBack={() => router.back()} 
+      />
       
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardAvoidingView}
       >
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-          <Text style={styles.pageTitle}>Request Service</Text>
+          <Text style={styles.pageTitle}>
+            {isEditing ? "Edit Request" : "Request Service"}
+          </Text>
           
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Select Services</Text>
@@ -307,6 +524,27 @@ export default function ServicesScreen() {
               </View>
             </View>
           </View>
+
+          {/* Address Selection */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Service Address</Text>
+            <View style={styles.addressSelector}>
+              {selectedAddress && (
+                <View style={styles.addressItem}>
+                  <MapPin size={20} color={colors.accent} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.addressText}>
+                      {selectedAddress.street}
+                      {selectedAddress.apartment && `, ${selectedAddress.apartment}`}
+                    </Text>
+                    <Text style={styles.addressSubText}>
+                      {selectedAddress.city}, {selectedAddress.state} {selectedAddress.zipCode}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
           
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Schedule</Text>
@@ -330,11 +568,6 @@ export default function ServicesScreen() {
                   {formatDate(selectedTime, 'h:mm a')}
                 </Text>
               </TouchableOpacity>
-              
-              <View style={styles.locationContainer}>
-                <MapPin size={16} color={colors.gray} />
-                <Text style={styles.locationText}>Main Residence</Text>
-              </View>
             </View>
           </View>
           
@@ -369,14 +602,25 @@ export default function ServicesScreen() {
             </View>
           </View>
           
-          <TouchableOpacity style={styles.submitButton} onPress={submitRequest}>
+          <TouchableOpacity 
+            style={styles.submitButton} 
+            onPress={handleSubmit}
+            disabled={isSaving}
+          >
             <LinearGradient
               colors={[colors.accentGradientLight, colors.accentGradientDark]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.submitButtonGradient}
             >
-              <Text style={styles.submitButtonText}>Submit Request</Text>
+              <Text style={styles.submitButtonText}>
+                {isSaving 
+                  ? 'Saving...' 
+                  : isEditing 
+                    ? 'Update Request' 
+                    : 'Submit Request'
+                }
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
         </ScrollView>

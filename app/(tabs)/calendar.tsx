@@ -1,617 +1,663 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Dimensions, TextInput, Modal } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Calendar as CalendarComponent } from 'react-native-calendars';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MapPin, User, Clock, MoreHorizontal, ChevronLeft, ChevronRight, Search, X } from 'lucide-react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColors } from '@/constants/Colors';
-import { formatDate } from '@/utils/dateUtils';
+import Header from '@/components/ui/Header';
 
-const { width } = Dimensions.get('window');
-
-// Mock data for scheduled services
-const MOCK_SERVICES = {
-  '2025-05-23': [
-    {
-      id: '1',
-      type: 'Home Cleaning',
-      location: 'Main Residence',
-      provider: 'Jane Smith',
-      time: '10:00',
-      status: 'confirmed',
-    },
-    {
-      id: '2',
-      type: 'Maintenance Check',
-      location: 'Main Residence',
-      provider: 'Tech Solutions',
-      time: '14:30',
-      status: 'confirmed',
-    }
-  ],
-  '2025-05-15': [
-    {
-      id: '3',
-      type: 'Home Cleaning',
-      location: 'Main Residence',
-      provider: 'Jane Smith',
-      time: '09:00',
-      status: 'confirmed',
-    }
-  ],
-  '2025-05-20': [
-    {
-      id: '4',
-      type: 'Lawn Maintenance',
-      location: 'Main Residence',
-      provider: 'Green Landscaping',
-      time: '08:00',
-      status: 'confirmed',
-    }
-  ],
-  '2025-05-28': [
-    {
-      id: '5',
-      type: 'Window Cleaning',
-      location: 'Main Residence',
-      provider: 'Crystal Clear Services',
-      time: '11:00',
-      status: 'confirmed',
-    }
-  ]
+// Mock data for addresses - following calendar.tsx pattern
+const MOCK_ADDRESSES = {
+  '1': {
+    id: '1',
+    street: '123 Main Street',
+    apartment: 'Apt 4B',
+    city: 'New York',
+    state: 'NY',
+    zipCode: '10001',
+    type: 'home',
+    isDefault: true,
+  },
+  '2': {
+    id: '2',
+    street: '456 Business Ave',
+    apartment: 'Suite 200',
+    city: 'New York',
+    state: 'NY',
+    zipCode: '10002',
+    type: 'work',
+    isDefault: false,
+  },
+  '3': {
+    id: '3',
+    street: '789 Commerce Blvd',
+    apartment: '',
+    city: 'Brooklyn',
+    state: 'NY',
+    zipCode: '11201',
+    type: 'billing',
+    isDefault: false,
+  }
 };
 
-export default function CalendarScreen() {
-  const colors = useThemeColors();
+// Address types configuration
+const ADDRESS_TYPES = [
+  { key: 'home', label: 'Home', icon: '🏠' },
+  { key: 'work', label: 'Work', icon: '🏢' },
+  { key: 'billing', label: 'Billing', icon: '💳' },
+  { key: 'shipping', label: 'Shipping', icon: '📦' }
+] as const;
+
+// Validation utilities
+const validateAddress = (address: any) => {
+  const errors = [];
   
-  const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [searchVisible, setSearchVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  // Create markedDates dynamically to always use current theme colors
-  const markedDates = React.useMemo(() => {
-    const dates = {};
-    
-    // Mark dates that have services
-    Object.keys(MOCK_SERVICES).forEach(date => {
-      dates[date] = { marked: true, dotColor: colors.accent };
-    });
-    
-    // Mark selected date
-    dates[selectedDate] = {
-      ...dates[selectedDate],
-      selected: true,
-      selectedColor: colors.accent,
-      selectedTextColor: colors.background,
-    };
-    
-    return dates;
-  }, [colors.accent, colors.background, selectedDate]);
-
-  const handleDateSelect = (day) => {
-    const selected = day.dateString;    
-    setSelectedDate(selected);
-  };
-
-  const eventsForSelectedDate = MOCK_SERVICES[selectedDate] || [];
-  const isToday = selectedDate === formatDate(new Date());
+  if (!address.street?.trim()) {
+    errors.push('Street address is required');
+  }
   
-  const handleReschedule = (serviceId) => {
-    console.log(`Reschedule service ${serviceId}`);
-  };
+  if (!address.city?.trim()) {
+    errors.push('City is required');
+  }
+  
+  if (!address.state?.trim()) {
+    errors.push('State is required');
+  }
+  
+  if (!address.zipCode?.trim()) {
+    errors.push('ZIP code is required');
+  } else if (!/^\d{5}(-\d{4})?$/.test(address.zipCode.trim())) {
+    errors.push('Invalid ZIP code format');
+  }
+  
+  return errors;
+};
 
-  const getCurrentMonth = () => {
-    return currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).toUpperCase();
-  };
+// Format address for display
+const formatAddressPreview = (address: any) => {
+  const parts = [
+    address.street,
+    address.apartment,
+    `${address.city}, ${address.state} ${address.zipCode}`
+  ].filter(Boolean);
+  
+  return parts.join('\n');
+};
 
-  const getDisplayTitle = () => {
-    if (isToday) {
-      return 'TODAY';
+// Simulate API calls with proper error handling
+const addressAPI = {
+  getById: async (id: string) => {
+    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+    
+    if (Math.random() < 0.1) { // 10% chance of error for testing
+      throw new Error('Failed to load address');
     }
-    // Parse the date string properly to avoid timezone issues
-    const [year, month, day] = selectedDate.split('-').map(Number);
-    const date = new Date(year, month - 1, day); // month is 0-indexed
-    return date.toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      month: 'long', 
-      day: 'numeric' 
-    }).toUpperCase();
-  };
-
-  const navigateMonth = (direction) => {
-    const newMonth = new Date(currentMonth);
-    newMonth.setMonth(currentMonth.getMonth() + direction);
-    setCurrentMonth(newMonth);
-  };
-
-  const getFilteredServices = () => {
-    if (!searchQuery) return eventsForSelectedDate;
     
-    return eventsForSelectedDate.filter(service =>
-      service.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.provider.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.location.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const address = MOCK_ADDRESSES[id];
+    if (!address) {
+      throw new Error('Address not found');
+    }
+    
+    return address;
+  },
+  
+  create: async (addressData: any) => {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    if (Math.random() < 0.05) { // 5% chance of error
+      throw new Error('Failed to create address');
+    }
+    
+    const newId = String(Date.now());
+    const newAddress = { ...addressData, id: newId };
+    
+    // In real app, this would persist to backend
+    console.log('Created address:', newAddress);
+    return newAddress;
+  },
+  
+  update: async (id: string, addressData: any) => {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    if (Math.random() < 0.05) { // 5% chance of error
+      throw new Error('Failed to update address');
+    }
+    
+    const updatedAddress = { ...addressData, id };
+    
+    // In real app, this would persist to backend
+    console.log('Updated address:', updatedAddress);
+    return updatedAddress;
+  }
+};
+
+export default function AddressScreen() {
+  const colors = useThemeColors();
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  
+  // Determine if we're editing an existing address
+  const addressId = params.id as string;
+  const isEditing = !!addressId;
+
+  // State management following calendar.tsx pattern
+  const [address, setAddress] = useState({
+    street: '',
+    apartment: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    type: 'home' as 'home' | 'work' | 'billing' | 'shipping',
+    isDefault: false,
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  // Load existing address data if editing
+  useEffect(() => {
+    if (isEditing && addressId) {
+      loadAddress();
+    }
+  }, [isEditing, addressId]);
+
+  const loadAddress = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const existingAddress = await addressAPI.getById(addressId);
+      setAddress({
+        street: existingAddress.street,
+        apartment: existingAddress.apartment || '',
+        city: existingAddress.city,
+        state: existingAddress.state,
+        zipCode: existingAddress.zipCode,
+        type: existingAddress.type || 'home',
+        isDefault: existingAddress.isDefault || false,
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load address';
+      setError(errorMessage);
+      console.error('Error loading address:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const getAllServices = () => {
-    if (!searchQuery) return {};
+  const handleSave = async () => {
+    // Clear previous validation errors
+    setValidationErrors([]);
     
-    const filtered = {};
-    Object.keys(MOCK_SERVICES).forEach(date => {
-      const services = MOCK_SERVICES[date].filter(service =>
-        service.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        service.provider.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        service.location.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      if (services.length > 0) {
-        filtered[date] = services;
+    // Validate address data
+    const errors = validateAddress(address);
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      Alert.alert('Validation Error', errors.join('\n'));
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      if (isEditing && addressId) {
+        await addressAPI.update(addressId, address);
+        Alert.alert('Success', 'Address updated successfully', [
+          { text: 'OK', onPress: () => router.back() }
+        ]);
+      } else {
+        await addressAPI.create(address);
+        Alert.alert('Success', 'Address added successfully', [
+          { text: 'OK', onPress: () => router.back() }
+        ]);
       }
-    });
-    return filtered;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save address';
+      setError(errorMessage);
+      Alert.alert('Error', errorMessage);
+      console.error('Error saving address:', err);
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const handleRetry = () => {
+    if (isEditing) {
+      loadAddress();
+    } else {
+      setError(null);
+    }
+  };
+
+  const updateAddress = (field: string, value: any) => {
+    setAddress(prev => ({ ...prev, [field]: value }));
+    
+    // Clear validation errors when user starts typing
+    if (validationErrors.length > 0) {
+      setValidationErrors([]);
+    }
+  };
+
+  // Show loading state
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="Address Information" onBack={() => router.back()} />
+        <View style={styles.centerContainer}>
+          <Text style={[styles.statusText, { color: colors.text }]}>Loading address...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error state
+  if (error && !saving) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="Address Information" onBack={() => router.back()} />
+        <View style={styles.centerContainer}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: colors.accent }]}
+            onPress={handleRetry}
+          >
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.secondaryButton, { borderColor: colors.border }]}
+            onPress={() => router.back()}
+          >
+            <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const styles = StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: colors.background,
     },
-    gradientContainer: {
-      borderTopLeftRadius: 25,
-      borderTopRightRadius: 25,
-      borderBottomLeftRadius: 25,
-      borderBottomRightRadius: 25,
-      borderWidth: 2,
-      overflow: 'hidden',
-      marginHorizontal: 10,
-      marginTop: 10,
-      backgroundColor: colors.background,
-    },
-    gradientBorder: {
-      padding: 2,
-      borderRadius: 25,
-    },
-    gradientInner: {
-      borderRadius: 23,
-      backgroundColor: colors.background,
-    },
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingTop: 20,
-      paddingBottom: 10,
-    },
-    headerLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    headerRight: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    monthNavigation: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    monthTitle: {
-      fontSize: 18,
-      fontFamily: 'Inter-Bold',
-      color: colors.accent,
-      marginHorizontal: 15,
-    },
-    navButton: {
-      padding: 5,
-    },
-    searchButton: {
-      padding: 5,
-    },
-    calendarContainer: {
-      paddingHorizontal: 10,
-      paddingBottom: 20,
-    },
-    bottomSection: {
+    content: {
       flex: 1,
-      backgroundColor: colors.background,
-      paddingTop: 20,
-    },
-    todaySection: {
-      paddingHorizontal: 20,
-      marginBottom: 20,
-    },
-    todayHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 10,
-    },
-    todayTitle: {
-      fontSize: 20,
-      fontFamily: 'Inter-Bold',
-      color: colors.accent,
-    },
-    activityCount: {
-      fontSize: 16,
-      fontFamily: 'Inter-Regular',
-      color: colors.gray,
-      marginTop: 2,
-    },
-    seeAllText: {
-      fontSize: 14,
-      fontFamily: 'Inter-Regular',
-      color: colors.gray,
-    },
-    serviceCard: {
-      backgroundColor: colors.cardBackground,
-      borderRadius: 16,
       padding: 20,
-      marginBottom: 12,
-      marginHorizontal: 20,
-      shadowColor: colors.text,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.08,
-      shadowRadius: 12,
-      elevation: 3,
     },
-    serviceHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      marginBottom: 12,
-    },
-    serviceLeft: {
+    centerContainer: {
       flex: 1,
-    },
-    serviceType: {
-      fontSize: 16,
-      fontFamily: 'Inter-SemiBold',
-      color: colors.accent,
-      marginBottom: 4,
-    },
-    serviceTime: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 8,
-    },
-    serviceIconGradient: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
       justifyContent: 'center',
       alignItems: 'center',
-      overflow: 'hidden',
+      padding: 20,
     },
-    timeText: {
-      fontSize: 14,
-      color: colors.gray,
-      fontFamily: 'Inter-Regular',
-      marginLeft: 8,
-    },
-    serviceDetail: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 4,
-    },
-    serviceDetailText: {
-      marginLeft: 8,
-      fontSize: 14,
-      color: colors.gray,
-      fontFamily: 'Inter-Regular',
-    },
-    moreButton: {
-      padding: 4,
-    },
-    progressBar: {
-      height: 4,
-      backgroundColor: colors.lightGray,
-      borderRadius: 2,
-      marginTop: 12,
-      overflow: 'hidden',
-    },
-    progressFill: {
-      height: '100%',
-      borderRadius: 2,
-    },
-    noServicesContainer: {
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: 40,
-    },
-    noServicesText: {
+    statusText: {
       fontSize: 16,
-      color: colors.gray,
       fontFamily: 'Inter-Regular',
       textAlign: 'center',
     },
-    // Search Modal Styles
-    searchOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      justifyContent: 'flex-start',
-      paddingTop: 100,
-    },
-    searchModal: {
-      backgroundColor: colors.background,
-      margin: 20,
-      borderRadius: 20,
-      maxHeight: '80%',
-      shadowColor: colors.text,
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.25,
-      shadowRadius: 25,
-      elevation: 10,
-    },
-    searchHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 20,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.lightGray,
-    },
-    searchInput: {
-      flex: 1,
+    errorText: {
       fontSize: 16,
       fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    retryButton: {
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 8,
+      marginBottom: 12,
+    },
+    retryButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontFamily: 'Inter-SemiBold',
+    },
+    secondaryButton: {
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+    },
+    secondaryButtonText: {
+      fontSize: 16,
+      fontFamily: 'Inter-SemiBold',
+    },
+    formSection: {
+      marginBottom: 24,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontFamily: 'Inter-Bold',
       color: colors.text,
-      paddingVertical: 10,
-      paddingHorizontal: 15,
+      marginBottom: 16,
+    },
+    formGroup: {
+      marginBottom: 16,
+    },
+    label: {
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    requiredLabel: {
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    input: {
       backgroundColor: colors.cardBackground,
       borderRadius: 12,
-    },
-    closeButton: {
-      marginLeft: 15,
-      padding: 5,
-    },
-    searchResults: {
-      maxHeight: 400,
-    },
-    searchDateHeader: {
+      padding: 16,
       fontSize: 16,
-      fontFamily: 'Inter-SemiBold',
-      color: colors.accent,
-      paddingHorizontal: 20,
-      paddingVertical: 15,
-      backgroundColor: colors.lightGray,
-    },
-    searchResultItem: {
-      paddingHorizontal: 20,
-      paddingVertical: 15,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.lightGray,
-    },
-    searchResultType: {
-      fontSize: 16,
-      fontFamily: 'Inter-SemiBold',
+      fontFamily: 'Inter-Regular',
       color: colors.text,
-      marginBottom: 4,
+      borderWidth: 1,
+      borderColor: colors.border,
+      minHeight: 52,
     },
-    searchResultDetail: {
+    inputError: {
+      borderColor: colors.destructive,
+      borderWidth: 2,
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    halfWidth: {
+      flex: 1,
+    },
+    typeSelector: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 8,
+    },
+    typeButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      borderWidth: 1,
+      minWidth: 80,
+      justifyContent: 'center',
+    },
+    typeButtonText: {
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+      marginLeft: 4,
+    },
+    defaultToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 16,
+      paddingHorizontal: 16,
+      backgroundColor: colors.cardBackground,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    defaultToggleText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+      color: colors.text,
+    },
+    defaultToggleSubtext: {
       fontSize: 14,
       fontFamily: 'Inter-Regular',
-      color: colors.gray,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    checkbox: {
+      width: 24,
+      height: 24,
+      borderRadius: 6,
+      borderWidth: 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkmark: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-Bold',
+    },
+    addressPreview: {
+      backgroundColor: colors.cardBackground,
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginTop: 8,
+    },
+    previewTitle: {
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    previewText: {
+      fontSize: 14,
+      fontFamily: 'Inter-Regular',
+      color: colors.textSecondary,
+      lineHeight: 20,
+    },
+    validationErrors: {
+      backgroundColor: colors.destructive + '10',
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: colors.destructive + '30',
+    },
+    validationErrorText: {
+      fontSize: 14,
+      fontFamily: 'Inter-Regular',
+      color: colors.destructive,
+      marginBottom: 4,
+    },
+    saveButton: {
+      backgroundColor: colors.accent,
+      borderRadius: 12,
+      padding: 16,
+      alignItems: 'center',
+      marginTop: 24,
+      marginBottom: 24,
+      opacity: saving ? 0.7 : 1,
+      minHeight: 52,
+      justifyContent: 'center',
+    },
+    saveButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontFamily: 'Inter-Bold',
     },
   });
 
+  const addressPreview = formatAddressPreview(address);
+  const hasRequiredFields = address.street.trim() && address.city.trim() && 
+                           address.state.trim() && address.zipCode.trim();
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <LinearGradient
-        colors={[colors.accentGradientLight, colors.accentGradientDark]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.gradientBorder, { marginHorizontal: 10, marginTop: 10, borderRadius: 25 }]}
-      >
-        <View style={styles.gradientInner}>
-          <View style={styles.header}>
-            <View style={styles.monthNavigation}>
-              <TouchableOpacity 
-                style={styles.navButton}
-                onPress={() => navigateMonth(-1)}
-              >
-                <ChevronLeft size={24} color={colors.accent} />
-              </TouchableOpacity>
-              <Text style={styles.monthTitle}>{getCurrentMonth()}</Text>
-              <TouchableOpacity 
-                style={styles.navButton}
-                onPress={() => navigateMonth(1)}
-              >
-                <ChevronRight size={24} color={colors.accent} />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.headerRight}>
-              <View style={styles.badgeContainer}>
-                <Text style={styles.badgeText}></Text>
-              </View>
-              <TouchableOpacity 
-                style={styles.searchButton}
-                onPress={() => setSearchVisible(true)}
-              >
-                <Search size={24} color={colors.accent} />
-              </TouchableOpacity>
-            </View>
+      <Header 
+        title={isEditing ? "Edit Address" : "Add Address"} 
+        onBack={() => router.back()} 
+      />
+      
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Validation Errors */}
+        {validationErrors.length > 0 && (
+          <View style={styles.validationErrors}>
+            {validationErrors.map((error, index) => (
+              <Text key={index} style={styles.validationErrorText}>• {error}</Text>
+            ))}
           </View>
+        )}
+
+        {/* Address Information Section */}
+        <View style={styles.formSection}>
+          <Text style={styles.sectionTitle}>Address Information</Text>
           
-          <View style={styles.calendarContainer}>
-            <CalendarComponent
-              key={`${currentMonth.getFullYear()}-${currentMonth.getMonth()}-${colors.accent}-${colors.background}`}
-              current={currentMonth.toISOString().split('T')[0]}
-              markedDates={markedDates}
-              onDayPress={handleDateSelect}
-              onMonthChange={(month) => {
-                const [year, monthNum, day] = month.dateString.split('-').map(Number);
-                setCurrentMonth(new Date(year, monthNum - 1, day));
-              }}
-              hideExtraDays={true}
-              firstDay={0}
-              theme={{
-                calendarBackground: 'transparent',
-                textSectionTitleColor: colors.text,
-                textSectionTitleDisabledColor: colors.gray,
-                selectedDayBackgroundColor: colors.accent,
-                selectedDayTextColor: colors.background,
-                todayTextColor: colors.accent,
-                dayTextColor: colors.text,
-                textDisabledColor: colors.gray,
-                dotColor: colors.accent,
-                selectedDotColor: colors.background,
-                arrowColor: colors.accent,
-                disabledArrowColor: colors.gray,
-                monthTextColor: colors.text,
-                indicatorColor: colors.accent,
-                textDayFontFamily: 'Inter-Regular',
-                textMonthFontFamily: 'Inter-Bold',
-                textDayHeaderFontFamily: 'Inter-SemiBold',
-                textDayFontSize: 16,
-                textMonthFontSize: 18,
-                textDayHeaderFontSize: 12,
-              }}
+          <View style={styles.formGroup}>
+            <Text style={styles.requiredLabel}>Street Address *</Text>
+            <TextInput
+              style={[
+                styles.input,
+                validationErrors.some(e => e.includes('Street')) && styles.inputError
+              ]}
+              value={address.street}
+              onChangeText={(text) => updateAddress('street', text)}
+              placeholder="Enter street address"
+              placeholderTextColor={colors.textSecondary}
+              autoCapitalize="words"
             />
           </View>
-        </View>
-      </LinearGradient>
-      
-      <View style={styles.bottomSection}>
-        <View style={styles.todaySection}>
-          <View style={styles.todayHeader}>
-            <View>
-              <Text style={styles.todayTitle}>
-                {getDisplayTitle()}
-              </Text>
-              <Text style={styles.activityCount}>
-                {eventsForSelectedDate.length} {eventsForSelectedDate.length === 1 ? 'Activity' : 'Activities'}
-              </Text>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Apartment/Suite</Text>
+            <TextInput
+              style={styles.input}
+              value={address.apartment}
+              onChangeText={(text) => updateAddress('apartment', text)}
+              placeholder="Enter apartment or suite number (optional)"
+              placeholderTextColor={colors.textSecondary}
+              autoCapitalize="words"
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.requiredLabel}>City *</Text>
+            <TextInput
+              style={[
+                styles.input,
+                validationErrors.some(e => e.includes('City')) && styles.inputError
+              ]}
+              value={address.city}
+              onChangeText={(text) => updateAddress('city', text)}
+              placeholder="Enter city"
+              placeholderTextColor={colors.textSecondary}
+              autoCapitalize="words"
+            />
+          </View>
+
+          <View style={styles.row}>
+            <View style={[styles.formGroup, styles.halfWidth]}>
+              <Text style={styles.requiredLabel}>State *</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  validationErrors.some(e => e.includes('State')) && styles.inputError
+                ]}
+                value={address.state}
+                onChangeText={(text) => updateAddress('state', text.toUpperCase())}
+                placeholder="State"
+                placeholderTextColor={colors.textSecondary}
+                maxLength={2}
+                autoCapitalize="characters"
+              />
             </View>
-            <TouchableOpacity>
-              <Text style={styles.seeAllText}>See all</Text>
-            </TouchableOpacity>
+
+            <View style={[styles.formGroup, styles.halfWidth]}>
+              <Text style={styles.requiredLabel}>ZIP Code *</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  validationErrors.some(e => e.includes('ZIP')) && styles.inputError
+                ]}
+                value={address.zipCode}
+                onChangeText={(text) => updateAddress('zipCode', text)}
+                placeholder="ZIP code"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                maxLength={10}
+              />
+            </View>
           </View>
         </View>
-        
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {getFilteredServices().length > 0 ? (
-            getFilteredServices().map((service, index) => (
-              <View key={service.id} style={styles.serviceCard}>
-                <View style={styles.serviceHeader}>
-                  <View style={styles.serviceLeft}>
-                    <Text style={styles.serviceType}>{service.type}</Text>
-                    
-                    <View style={styles.serviceTime}>
-                      <LinearGradient
-                        colors={[colors.accentGradientLight, colors.accentGradientDark]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.serviceIconGradient}
-                      >
-                        <Clock size={16} color={colors.background} />
-                      </LinearGradient>
-                      <Text style={styles.timeText}>{service.time}</Text>
-                    </View>
-                    
-                    <View style={styles.serviceDetail}>
-                      <Text style={styles.serviceDetailText}>{service.location}</Text>
-                    </View>
-                  </View>
-                  
-                  <TouchableOpacity style={styles.moreButton}>
-                    <MoreHorizontal size={20} color={colors.gray} />
-                  </TouchableOpacity>
-                </View>
-                
-                <View style={[styles.progressBar, { backgroundColor: colors.lightAccent }]}>
-                  <View style={[styles.progressFill, { backgroundColor: colors.accent, width: '100%' }]} />
-                </View>
-              </View>
-            ))
-          ) : (
-            <View style={styles.noServicesContainer}>
-              <Text style={styles.noServicesText}>
-                {searchQuery ? 'No services found matching your search' : 'No services scheduled for this date'}
-              </Text>
-            </View>
-          )}
-        </ScrollView>
-        
-        {/* Search Modal */}
-        <Modal
-          visible={searchVisible}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => {
-            setSearchVisible(false);
-            setSearchQuery('');
-          }}
-        >
-          <View style={styles.searchOverlay}>
-            <View style={styles.searchModal}>
-              <View style={styles.searchHeader}>
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search services..."
-                  placeholderTextColor={colors.gray}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoFocus={true}
-                />
-                <TouchableOpacity 
-                  onPress={() => {
-                    setSearchVisible(false);
-                    setSearchQuery('');
-                  }}
-                  style={styles.closeButton}
+
+        {/* Address Type Section */}
+        <View style={styles.formSection}>
+          <Text style={styles.sectionTitle}>Address Type</Text>
+          <View style={styles.typeSelector}>
+            {ADDRESS_TYPES.map((type) => (
+              <TouchableOpacity
+                key={type.key}
+                style={[
+                  styles.typeButton,
+                  {
+                    backgroundColor: address.type === type.key ? colors.accent : colors.cardBackground,
+                    borderColor: address.type === type.key ? colors.accent : colors.border,
+                  }
+                ]}
+                onPress={() => updateAddress('type', type.key)}
+              >
+                <Text style={{ fontSize: 16 }}>{type.icon}</Text>
+                <Text
+                  style={[
+                    styles.typeButtonText,
+                    {
+                      color: address.type === type.key ? '#fff' : colors.text,
+                    }
+                  ]}
                 >
-                  <X size={24} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-              
-              <ScrollView style={styles.searchResults}>
-                {searchQuery ? (
-                  Object.keys(getAllServices()).length > 0 ? (
-                    Object.keys(getAllServices()).map(date => (
-                      <View key={date}>
-                        <Text style={styles.searchDateHeader}>
-                          {new Date(date).toLocaleDateString('en-US', { 
-                            weekday: 'long', 
-                            month: 'long', 
-                            day: 'numeric' 
-                          })}
-                        </Text>
-                        {getAllServices()[date].map(service => (
-                          <TouchableOpacity
-                            key={service.id}
-                            style={styles.searchResultItem}
-                            onPress={() => {
-                              // Parse date properly to avoid timezone issues
-                              const [year, month, day] = date.split('-').map(Number);
-                              const properDate = new Date(year, month - 1, day);
-                              setSelectedDate(date);
-                              handleDateSelect({ dateString: date });
-                              setSearchVisible(false);
-                              setSearchQuery('');
-                            }}
-                          >
-                            <Text style={styles.searchResultType}>{service.type}</Text>
-                            <Text style={styles.searchResultDetail}>{service.provider} • {service.time}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    ))
-                  ) : (
-                    <View style={styles.noServicesContainer}>
-                      <Text style={styles.noServicesText}>No services found matching "{searchQuery}"</Text>
-                    </View>
-                  )
-                ) : (
-                  <View style={styles.noServicesContainer}>
-                    <Text style={styles.noServicesText}>Start typing to search services...</Text>
-                  </View>
-                )}
-              </ScrollView>
+                  {type.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Default Address Toggle */}
+        <View style={styles.formSection}>
+          <TouchableOpacity
+            style={styles.defaultToggle}
+            onPress={() => updateAddress('isDefault', !address.isDefault)}
+          >
+            <View>
+              <Text style={styles.defaultToggleText}>Set as default address</Text>
+              <Text style={styles.defaultToggleSubtext}>
+                Use this address as the primary option
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.checkbox,
+                {
+                  backgroundColor: address.isDefault ? colors.accent : 'transparent',
+                  borderColor: address.isDefault ? colors.accent : colors.border,
+                }
+              ]}
+            >
+              {address.isDefault && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Address Preview */}
+        {hasRequiredFields && (
+          <View style={styles.formSection}>
+            <View style={styles.addressPreview}>
+              <Text style={styles.previewTitle}>Address Preview</Text>
+              <Text style={styles.previewText}>{addressPreview}</Text>
             </View>
           </View>
-        </Modal>
-      </View>
+        )}
+
+        <TouchableOpacity 
+          style={styles.saveButton} 
+          onPress={handleSave}
+          disabled={saving || !hasRequiredFields}
+        >
+          <Text style={styles.saveButtonText}>
+            {saving ? 'Saving...' : isEditing ? 'Update Address' : 'Save Address'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
     </SafeAreaView>
   );
 }

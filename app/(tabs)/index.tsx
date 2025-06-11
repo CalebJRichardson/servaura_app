@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { ChevronRight, Clock, Calendar as CalendarIcon, CreditCard, RotateCcw, Plus } from 'lucide-react-native';
@@ -9,22 +9,143 @@ import { useAuth } from '@/contexts/AuthContext';
 import Header from '@/components/ui/Header';
 import { LinearGradient } from 'expo-linear-gradient';
 
+// Assuming these context hooks exist - follow the same pattern as useAddress
+import { useServices } from '@/contexts/ServicesContext';
+import { useBookings } from '@/contexts/BookingsContext';
+
+interface UpcomingService {
+  id: string;
+  type: string;
+  date: string;
+  time: string;
+  status: 'confirmed' | 'pending' | 'cancelled';
+  location: string;
+  serviceProvider?: string;
+}
+
 export default function HomeScreen() {
-  const { user } = useAuth();
+  const { user, userLoading, userError } = useAuth();
   const router = useRouter();
   const colors = useThemeColors();
   
-  // Upcoming service (mock data)
-  const upcomingService = {
-    type: 'Home Cleaning',
-    date: 'October 15, 2025',
-    time: '10:00 AM - 12:00 PM',
-    status: 'Confirmed',
+  // Get services and bookings context - following address.tsx pattern
+  const { 
+    services,
+    servicesLoading,
+    servicesError,
+    getServices
+  } = useServices();
+
+  const { 
+    bookings,
+    bookingsLoading,
+    bookingsError,
+    getUpcomingBookings,
+    cancelBooking
+  } = useBookings();
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [upcomingService, setUpcomingService] = useState<UpcomingService | null>(null);
+
+  // Load data on component mount
+  useEffect(() => {
+    loadInitialData();
+  }, []);
+
+  // Process upcoming services when bookings change
+  useEffect(() => {
+    if (bookings && bookings.length > 0) {
+      // Get the next upcoming service
+      const nextService = bookings
+        .filter(booking => booking.status === 'confirmed' && new Date(booking.date) > new Date())
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+      
+      setUpcomingService(nextService || null);
+    }
+  }, [bookings]);
+
+  const loadInitialData = async () => {
+    try {
+      await Promise.all([
+        getServices(),
+        getUpcomingBookings()
+      ]);
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await loadInitialData();
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      Alert.alert('Error', 'Failed to refresh data. Please try again.');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleServiceCardPress = (route: string) => {
     router.push(route);
   };
+
+  const handleCancelService = async () => {
+    if (!upcomingService) return;
+
+    Alert.alert(
+      'Cancel Service',
+      'Are you sure you want to cancel this service?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await cancelBooking(upcomingService.id);
+              Alert.alert('Success', 'Service cancelled successfully');
+            } catch (error) {
+              console.error('Error cancelling service:', error);
+              Alert.alert('Error', 'Failed to cancel service. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Show loading state
+  if (userLoading || (servicesLoading && bookingsLoading)) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <StatusBar style="auto" />
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, { color: colors.text }]}>Loading...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error state
+  if (userError || servicesError || bookingsError) {
+    const errorMessage = userError || servicesError || bookingsError;
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <StatusBar style="auto" />
+        <View style={styles.errorContainer}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMessage}</Text>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: colors.accent }]}
+            onPress={handleRefresh}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const styles = StyleSheet.create({
     container: {
@@ -187,13 +308,82 @@ export default function HomeScreen() {
     bottomPadding: {
       height: 40,
     },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    errorText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    retryButton: {
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    retryButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+    },
+    noServiceCard: {
+      backgroundColor: colors.cardBackground,
+      borderRadius: 20,
+      padding: 24,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderStyle: 'dashed',
+    },
+    noServiceText: {
+      fontSize: 16,
+      color: colors.textSecondary,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 16,
+    },
+    scheduleButton: {
+      backgroundColor: colors.accent,
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    scheduleButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
+    },
   });
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="auto" />
       
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={[colors.accent]}
+            tintColor={colors.accent}
+          />
+        }
+      >
         <View style={styles.welcomeSection}>
           <Text style={styles.welcomeText}>Welcome back,</Text>
           <Text style={styles.userName}>{user?.name || 'Guest'}</Text>
@@ -202,46 +392,66 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Upcoming Service</Text>
-              <TouchableOpacity style={styles.seeAllButton} onPress={() => router.push('/calendar')}>
+            <TouchableOpacity style={styles.seeAllButton} onPress={() => router.push('/calendar')}>
               <Text style={styles.seeAllText}>See all</Text>
               <ChevronRight size={16} color={colors.accent} />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.upcomingServiceCard}>
-            <View style={styles.serviceHeader}>
-              <View style={styles.serviceIconContainer}>
-                <LinearGradient
-                  colors={[colors.accentGradientLight, colors.accentGradientDark]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.serviceIconGradient}
-                >
-                  <Clock size={24} color="#1a1a1a" />
-                </LinearGradient>
+          {upcomingService ? (
+            <View style={styles.upcomingServiceCard}>
+              <View style={styles.serviceHeader}>
+                <View style={styles.serviceIconContainer}>
+                  <LinearGradient
+                    colors={[colors.accentGradientLight, colors.accentGradientDark]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.serviceIconGradient}
+                  >
+                    <Clock size={24} color="#1a1a1a" />
+                  </LinearGradient>
+                </View>
+                <View style={styles.serviceInfo}>
+                  <Text style={styles.serviceType}>{upcomingService.type}</Text>
+                  <Text style={styles.serviceLocation}>{upcomingService.location}</Text>
+                </View>
               </View>
-              <View style={styles.serviceInfo}>
-                <Text style={styles.serviceType}>{upcomingService.type}</Text>
-                <Text style={styles.serviceLocation}>Main Residence</Text>
+              
+              <View style={styles.serviceDetails}>
+                <View style={styles.serviceDetailRow}>
+                  <CalendarIcon size={18} color={colors.accent} />
+                  <Text style={styles.serviceDetailText}>{upcomingService.date}</Text>
+                </View>
+                <View style={styles.serviceDetailRow}>
+                  <Clock size={18} color={colors.accent} />
+                  <Text style={styles.serviceDetailText}>{upcomingService.time}</Text>
+                </View>
               </View>
-            </View>
-            
-            <View style={styles.serviceDetails}>
-              <View style={styles.serviceDetailRow}>
-                <CalendarIcon size={18} color={colors.accent} />
-                <Text style={styles.serviceDetailText}>{upcomingService.date}</Text>
-              </View>
-              <View style={styles.serviceDetailRow}>
-                <Clock size={18} color={colors.accent} />
-                <Text style={styles.serviceDetailText}>{upcomingService.time}</Text>
-              </View>
-            </View>
 
-            <View style={styles.statusContainer}>
-              <View style={styles.statusDot} />
-              <Text style={styles.statusText}>{upcomingService.status}</Text>
+              <View style={styles.statusContainer}>
+                <View style={[styles.statusDot, { 
+                  backgroundColor: upcomingService.status === 'confirmed' ? '#4CAF50' : 
+                                 upcomingService.status === 'pending' ? '#FF9800' : '#F44336' 
+                }]} />
+                <Text style={[styles.statusText, { 
+                  color: upcomingService.status === 'confirmed' ? '#4CAF50' : 
+                         upcomingService.status === 'pending' ? '#FF9800' : '#F44336' 
+                }]}>
+                  {upcomingService.status.charAt(0).toUpperCase() + upcomingService.status.slice(1)}
+                </Text>
+              </View>
             </View>
-          </View>
+          ) : (
+            <View style={styles.noServiceCard}>
+              <Text style={styles.noServiceText}>No upcoming services scheduled</Text>
+              <TouchableOpacity 
+                style={styles.scheduleButton}
+                onPress={() => handleServiceCardPress('/services')}
+              >
+                <Text style={styles.scheduleButtonText}>Schedule Service</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, Alert, Switch, useColorScheme } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, Alert, Switch, useColorScheme, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
@@ -7,6 +7,8 @@ import { User, Chrome as Home, CreditCard, Lock, Bell, CircleHelp as HelpCircle,
 import { LinearGradient } from 'expo-linear-gradient';
 import { useThemeColors } from '@/constants/Colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { useProfile } from '@/contexts/ProfileContext'; // Assuming this exists
+import { useSettings } from '@/contexts/SettingsContext'; // Assuming this exists
 import Header from '@/components/ui/Header';
 
 export default function ProfileScreen() {
@@ -14,10 +16,68 @@ export default function ProfileScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const colors = useThemeColors();
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   
-  const toggleNotifications = () => {
-    setNotificationsEnabled(!notificationsEnabled);
+  // Data integration contexts
+  const { 
+    profile,
+    profileLoading,
+    profileError,
+    refreshProfile,
+    updateProfileSettings
+  } = useProfile();
+  
+  const {
+    settings,
+    settingsLoading,
+    settingsError,
+    updateSettings,
+    refreshSettings
+  } = useSettings();
+
+  // Local state
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    settings?.notifications?.enabled ?? true
+  );
+
+  // Load initial data and sync settings
+  useEffect(() => {
+    if (settings?.notifications) {
+      setNotificationsEnabled(settings.notifications.enabled);
+    }
+  }, [settings]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        refreshProfile(),
+        refreshSettings()
+      ]);
+    } catch (error) {
+      console.error('Error refreshing profile data:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+  
+  const toggleNotifications = async () => {
+    const newValue = !notificationsEnabled;
+    setNotificationsEnabled(newValue);
+    
+    try {
+      await updateSettings({
+        notifications: {
+          ...settings?.notifications,
+          enabled: newValue
+        }
+      });
+    } catch (error) {
+      // Revert on error
+      setNotificationsEnabled(!newValue);
+      Alert.alert('Error', 'Failed to update notification settings');
+      console.error('Error updating notifications:', error);
+    }
   };
   
   const handleLogout = () => {
@@ -31,7 +91,13 @@ export default function ProfileScreen() {
         },
         { 
           text: "Logout", 
-          onPress: () => logout(),
+          onPress: async () => {
+            try {
+              await logout();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          },
           style: "destructive"
         }
       ]
@@ -42,6 +108,36 @@ export default function ProfileScreen() {
     router.push(route);
   };
 
+  // Show loading state
+  if (profileLoading && !profile) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="My Profile" />
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, { color: colors.text }]}>Loading profile...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error state
+  if (profileError && !profile) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+        <Header title="My Profile" />
+        <View style={styles.errorContainer}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{profileError}</Text>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: colors.accent }]}
+            onPress={handleRefresh}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   const styles = StyleSheet.create({
     container: {
       flex: 1,
@@ -49,6 +145,37 @@ export default function ProfileScreen() {
     },
     scrollView: {
       flex: 1,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    errorText: {
+      fontSize: 16,
+      fontFamily: 'Inter-Regular',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    retryButton: {
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    retryButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontFamily: 'Inter-SemiBold',
     },
     profileHeader: {
       alignItems: 'center',
@@ -216,6 +343,7 @@ export default function ProfileScreen() {
       color: '#FF8FA3',
       backgroundColor: '#FF8FA320',
       hasSwitch: true,
+      isLoading: settingsLoading,
     },
   ];
 
@@ -240,6 +368,7 @@ export default function ProfileScreen() {
       key={index}
       style={[styles.settingItem, isLast && styles.lastSettingItem]}
       onPress={item.isLogout ? handleLogout : () => item.route && navigateToSection(item.route)}
+      disabled={item.isLoading}
     >
       <View style={styles.settingLeft}>
         <View style={styles.iconContainer}>
@@ -262,6 +391,7 @@ export default function ProfileScreen() {
           onValueChange={toggleNotifications}
           trackColor={{ false: colors.border, true: `${colors.accent}40` }}
           thumbColor={notificationsEnabled ? colors.accent : colors.gray}
+          disabled={item.isLoading}
         />
       ) : (
         <ChevronRight size={20} color={colors.gray} />
@@ -274,16 +404,31 @@ export default function ProfileScreen() {
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <Header title="My Profile" />
       
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+            colors={[colors.accent]}
+          />
+        }
+      >
         <View style={styles.profileHeader}>
           <View style={styles.profileImageContainer}>
             <Image 
-              source={{ uri: user?.avatar || 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg' }} 
+              source={{ uri: profile?.avatar || user?.avatar || 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg' }} 
               style={styles.profileImage} 
             />
           </View>
-          <Text style={styles.profileName}>{user?.name || 'John Doe'}</Text>
-          <Text style={styles.profileEmail}>{user?.email || 'john.doe@example.com'}</Text>
+          <Text style={styles.profileName}>
+            {profile?.name || user?.name || 'John Doe'}
+          </Text>
+          <Text style={styles.profileEmail}>
+            {profile?.email || user?.email || 'john.doe@example.com'}
+          </Text>
           <TouchableOpacity 
             style={styles.editProfileButton}
             onPress={() => navigateToSection('/profile/personal')}
